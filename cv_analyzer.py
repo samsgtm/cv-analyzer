@@ -10,6 +10,97 @@ import plotly.graph_objects as go
 from datetime import datetime
 import pickle
 
+def read_file_content(file_obj):
+    """Extract text from uploaded file"""
+    text = ""
+    try:
+        # Get file name from the BytesIO object's name if available
+        file_name = getattr(file_obj, 'name', '')
+        
+        if file_name.endswith('.pdf'):
+            pdf_reader = PyPDF2.PdfReader(file_obj)
+            for page in pdf_reader.pages:
+                text += page.extract_text()
+        elif file_name.endswith('.docx'):
+            doc = docx.Document(file_obj)
+            text = ' '.join([paragraph.text for paragraph in doc.paragraphs])
+        else:  # Assume text file
+            text = file_obj.read().decode('utf-8')
+    except Exception as e:
+        st.error(f"Error reading file: {str(e)}")
+    return text
+
+def analyze_cv(client, cv_text: str) -> dict:
+    """Get CV analysis from Claude"""
+    prompt = f"""
+    Analyze this CV for a finance role with the following requirements:
+    - Strong background in finance and economics
+    - Experience in M&A or target identification
+    - Strong analytical skills
+    - Excel proficiency required
+    - Python/SQL skills are bonus
+    - Must show autonomy and ownership
+    - Should be enthusiastic about learning
+    - Should demonstrate low ego and team orientation
+    - Location preference for UK-based candidates
+    
+    Return ONLY a JSON string (no other text) in this exact format:
+    {{
+        "location": {{"is_uk": boolean, "location_details": "string"}},
+        "skills": {{
+            "finance_economics": number,
+            "analytical": number,
+            "excel": number,
+            "python_sql": number,
+            "identified_skills": ["skill1", "skill2"]
+        }},
+        "experience": {{
+            "years_relevant": number,
+            "ma_experience": number,
+            "leadership": number,
+            "autonomy_indicators": ["indicator1", "indicator2"]
+        }},
+        "cultural_fit": {{
+            "learning_orientation": number,
+            "impact_driven": number,
+            "team_orientation": number,
+            "supporting_evidence": ["evidence1", "evidence2"]
+        }},
+        "overall_score": number,
+        "key_strengths": ["strength1", "strength2"],
+        "potential_concerns": ["concern1", "concern2"]
+    }}
+
+    CV Text:
+    {cv_text}
+    """
+    
+    try:
+        response = client.messages.create(
+            model="claude-3-opus-20240229",
+            max_tokens=1000,
+            temperature=0.2,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        # Extract the JSON string from Claude's response
+        response_content = response.content
+        if isinstance(response_content, list):
+            response_content = response_content[0].text
+        
+        # Try to parse the JSON
+        try:
+            return json.loads(response_content)
+        except json.JSONDecodeError as e:
+            st.error(f"Failed to parse Claude's response as JSON: {str(e)}")
+            st.text("Claude's response:")
+            st.text(response_content)
+            return None
+            
+    except Exception as e:
+        st.error(f"Error in Claude analysis: {str(e)}")
+        return None
+
 class EnhancedCVAnalyzer:
     def __init__(self):
         # Initialize session state for persistence
@@ -42,7 +133,7 @@ class EnhancedCVAnalyzer:
             gaps.append("Excel proficiency needs improvement")
         if skills_dict['analytical'] < 7:
             gaps.append("Analytical skills need strengthening")
-        if skills_dict['ma_experience'] < 6:
+        if skills_dict.get('ma_experience', 0) < 6:
             gaps.append("Limited M&A experience")
         return gaps
     
@@ -68,100 +159,18 @@ class EnhancedCVAnalyzer:
             
         return red_flags
 
-def custom_scoring_ui():
-    """UI for adjusting scoring weights"""
-    st.sidebar.header("Customize Scoring Weights")
-    
-    weights = st.session_state.custom_weights
-    new_weights = {}
-    
-    for skill, weight in weights.items():
-        new_weights[skill] = st.sidebar.slider(
-            f"{skill.replace('_', ' ').title()}", 
-            0.0, 1.0, weight,
-            help=f"Adjust importance of {skill}"
-        )
-    
-    st.session_state.custom_weights = new_weights
-
-def apply_quick_filters(df):
-    """Apply quick filters to CV dataframe"""
-    st.sidebar.header("Quick Filters")
-    
-    # Experience filter
-    min_exp = st.sidebar.slider("Minimum Years Experience", 0, 15, 0)
-    df = df[df['experience'].apply(lambda x: x['years_relevant'] >= min_exp)]
-    
-    # Location filter
-    location_filter = st.sidebar.radio("Location", ["All", "UK Only", "Non-UK"])
-    if location_filter == "UK Only":
-        df = df[df['location'].apply(lambda x: x['is_uk'])]
-    elif location_filter == "Non-UK":
-        df = df[~df['location'].apply(lambda x: x['is_uk'])]
-    
-    # Skills filter
-    min_finance = st.sidebar.slider("Min Finance Score", 0, 10, 0)
-    min_excel = st.sidebar.slider("Min Excel Score", 0, 10, 0)
-    df = df[
-        (df['skills'].apply(lambda x: x['finance_economics'] >= min_finance)) &
-        (df['skills'].apply(lambda x: x['excel'] >= min_excel))
-    ]
-    
-    return df
-
-def save_session_state():
-    """Save current session state to file"""
-    try:
-        with open('session_state.pkl', 'wb') as f:
-            pickle.dump(dict(st.session_state), f)
-        return True
-    except Exception as e:
-        st.error(f"Error saving session: {str(e)}")
-        return False
-
-def load_session_state():
-    """Load previous session state"""
-    try:
-        with open('session_state.pkl', 'rb') as f:
-            saved_state = pickle.load(f)
-            for key, value in saved_state.items():
-                st.session_state[key] = value
-        return True
-    except FileNotFoundError:
-        return False
-    except Exception as e:
-        st.error(f"Error loading session: {str(e)}")
-        return False
-
-def export_selected_candidates(selected_df):
-    """Export selected candidates to CSV"""
-    if not selected_df.empty:
-        # Flatten nested dictionaries for CSV export
-        export_df = pd.DataFrame()
-        export_df['Filename'] = selected_df['filename']
-        export_df['Overall Score'] = selected_df['overall_score']
-        export_df['Location'] = selected_df['location'].apply(lambda x: x['location_details'])
-        export_df['Finance Score'] = selected_df['skills'].apply(lambda x: x['finance_economics'])
-        export_df['Excel Score'] = selected_df['skills'].apply(lambda x: x['excel'])
-        export_df['Years Experience'] = selected_df['experience'].apply(lambda x: x['years_relevant'])
-        export_df['Key Strengths'] = selected_df['key_strengths'].apply(lambda x: ', '.join(x))
-        export_df['Skills Gaps'] = selected_df['skills_gaps'].apply(lambda x: ', '.join(x))
-        export_df['Red Flags'] = selected_df['red_flags'].apply(lambda x: ', '.join(x))
-        
-        # Convert to CSV
-        csv = export_df.to_csv(index=False)
-        
-        # Create download button
-        st.download_button(
-            "Download Selected Candidates",
-            csv,
-            "selected_candidates.csv",
-            "text/csv",
-            key='download-csv'
-        )
+[... Rest of the code remains the same ...]
 
 def main():
-    st.title("SAG CV Cruncher")
+    st.title("Enhanced CV Analyzer")
+    
+    # Get API key
+    api_key = st.sidebar.text_input("Enter your Anthropic API key", type="password")
+    if not api_key:
+        st.warning("Please enter your Anthropic API key")
+        return
+        
+    client = anthropic.Client(api_key=api_key)
     
     analyzer = EnhancedCVAnalyzer()
     
@@ -201,8 +210,10 @@ def main():
                 continue
             
             # Process CV
-            cv_text = read_file_content(BytesIO(file_content))
-            analysis = analyze_cv(cv_text)
+            file_obj = BytesIO(file_content)
+            file_obj.name = file.name  # Add name attribute for file type detection
+            cv_text = read_file_content(file_obj)
+            analysis = analyze_cv(client, cv_text)
             
             if analysis:
                 # Add additional analysis
