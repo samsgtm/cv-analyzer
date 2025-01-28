@@ -161,7 +161,7 @@ def export_selected_candidates(selected_df):
         )
 
 def main():
-    st.title("Enhanced CV Analyzer")
+    st.title("SAG CV Cruncher")
     
     analyzer = EnhancedCVAnalyzer()
     
