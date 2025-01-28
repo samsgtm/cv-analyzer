@@ -159,7 +159,97 @@ class EnhancedCVAnalyzer:
             
         return red_flags
 
-[... Rest of the code remains the same ...]
+def custom_scoring_ui():
+    """UI for adjusting scoring weights"""
+    st.sidebar.header("Customize Scoring Weights")
+    
+    weights = st.session_state.custom_weights
+    new_weights = {}
+    
+    for skill, weight in weights.items():
+        new_weights[skill] = st.sidebar.slider(
+            f"{skill.replace('_', ' ').title()}", 
+            0.0, 1.0, weight,
+            help=f"Adjust importance of {skill}"
+        )
+    
+    st.session_state.custom_weights = new_weights
+
+def apply_quick_filters(df):
+    """Apply quick filters to CV dataframe"""
+    st.sidebar.header("Quick Filters")
+    
+    # Experience filter
+    min_exp = st.sidebar.slider("Minimum Years Experience", 0, 15, 0)
+    df = df[df['experience'].apply(lambda x: x['years_relevant'] >= min_exp)]
+    
+    # Location filter
+    location_filter = st.sidebar.radio("Location", ["All", "UK Only", "Non-UK"])
+    if location_filter == "UK Only":
+        df = df[df['location'].apply(lambda x: x['is_uk'])]
+    elif location_filter == "Non-UK":
+        df = df[~df['location'].apply(lambda x: x['is_uk'])]
+    
+    # Skills filter
+    min_finance = st.sidebar.slider("Min Finance Score", 0, 10, 0)
+    min_excel = st.sidebar.slider("Min Excel Score", 0, 10, 0)
+    df = df[
+        (df['skills'].apply(lambda x: x['finance_economics'] >= min_finance)) &
+        (df['skills'].apply(lambda x: x['excel'] >= min_excel))
+    ]
+    
+    return df
+
+def save_session_state():
+    """Save current session state to file"""
+    try:
+        with open('session_state.pkl', 'wb') as f:
+            pickle.dump(dict(st.session_state), f)
+        return True
+    except Exception as e:
+        st.error(f"Error saving session: {str(e)}")
+        return False
+
+def load_session_state():
+    """Load previous session state"""
+    try:
+        with open('session_state.pkl', 'rb') as f:
+            saved_state = pickle.load(f)
+            for key, value in saved_state.items():
+                st.session_state[key] = value
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception as e:
+        st.error(f"Error loading session: {str(e)}")
+        return False
+
+def export_selected_candidates(filtered_df):
+    """Export selected candidates to CSV"""
+    if not filtered_df.empty:
+        # Flatten nested dictionaries for CSV export
+        export_df = pd.DataFrame()
+        export_df['Filename'] = filtered_df['filename']
+        export_df['Overall Score'] = filtered_df['overall_score']
+        export_df['Location'] = filtered_df['location'].apply(lambda x: x['location_details'])
+        export_df['Finance Score'] = filtered_df['skills'].apply(lambda x: x['finance_economics'])
+        export_df['Excel Score'] = filtered_df['skills'].apply(lambda x: x['excel'])
+        export_df['Years Experience'] = filtered_df['experience'].apply(lambda x: x['years_relevant'])
+        export_df['Key Strengths'] = filtered_df['key_strengths'].apply(lambda x: ', '.join(x))
+        export_df['Skills Gaps'] = filtered_df['skills_gaps'].apply(lambda x: ', '.join(x))
+        export_df['Red Flags'] = filtered_df['red_flags'].apply(lambda x: ', '.join(x))
+        
+        # Convert to CSV
+        csv = export_df.to_csv(index=False)
+        
+        # Create download button
+        st.download_button(
+            "Download Selected Candidates",
+            csv,
+            "selected_candidates.csv",
+            "text/csv",
+            key='download-csv'
+        )
 
 def main():
     st.title("Enhanced CV Analyzer")
