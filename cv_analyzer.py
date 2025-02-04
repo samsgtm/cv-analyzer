@@ -342,7 +342,7 @@ def display_results(filtered_df):
                     st.write("Flags:", ", ".join(row['red_flags']))
 
 def main():
-    st.title("Enhanced CV Analyzer")
+    st.title("StAG CV Cruncher")
     
     # Get API key
     api_key = st.sidebar.text_input("Enter your Anthropic API key", type="password")
