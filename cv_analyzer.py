@@ -33,43 +33,58 @@ def read_file_content(file_obj):
 def analyze_cv(client, cv_text: str) -> dict:
     """Get CV analysis from Claude"""
     prompt = f"""
-    Analyze this CV for a finance role with the following requirements:
-    - Strong background in finance and economics
-    - Experience in M&A or target identification
-    - Strong analytical skills
-    - Excel proficiency required
-    - Python/SQL skills are bonus
-    - Must show autonomy and ownership
-    - Should be enthusiastic about learning
-    - Should demonstrate low ego and team orientation
-    - Location preference for UK-based candidates
+    Analyze this CV for a finance role. Extract the email address if present and analyze based on these criteria:
+
+    Skills (45% of total score):
+    - Finance and economics knowledge
+    - Excel proficiency
+    - Analytical capabilities
+
+    Experience (15% of total score):
+    - Autonomy and leadership
+    - Relevant industry experience
     
+    Cultural Fit (25% of total score):
+    - Learning mindset
+    - Impact-orientation
+    - Collaboration/team fit
+    
+    Location (15% of total score):
+    - UK location preferred
+
     Return ONLY a JSON string (no other text) in this exact format:
     {{
+        "email": "string",
         "location": {{"is_uk": boolean, "location_details": "string"}},
         "skills": {{
-            "finance_economics": number,
-            "analytical": number,
-            "excel": number,
-            "python_sql": number,
+            "finance_economics": number (0-10),
+            "analytical": number (0-10),
+            "excel": number (0-10),
+            "python_sql": number (0-10),
             "identified_skills": ["skill1", "skill2"]
         }},
         "experience": {{
             "years_relevant": number,
-            "ma_experience": number,
-            "leadership": number,
-            "autonomy_indicators": ["indicator1", "indicator2"]
+            "autonomy": number (0-10),
+            "industry_relevance": number (0-10),
+            "key_achievements": ["achievement1", "achievement2"]
         }},
         "cultural_fit": {{
-            "learning_orientation": number,
-            "impact_driven": number,
-            "team_orientation": number,
+            "learning_orientation": number (0-10),
+            "impact_driven": number (0-10),
+            "team_orientation": number (0-10),
             "supporting_evidence": ["evidence1", "evidence2"]
         }},
-        "overall_score": number,
+        "overall_score": number (0-10),
         "key_strengths": ["strength1", "strength2"],
         "potential_concerns": ["concern1", "concern2"]
     }}
+
+    Base the overall_score (0-10) on these weightings:
+    - Skills: 45% (finance_economics, excel, analytical)
+    - Experience: 15% (autonomy, industry_relevance)
+    - Cultural Fit: 25% (learning_orientation, impact_driven, team_orientation)
+    - Location: 15% (10 for UK, 5 for non-UK)
 
     CV Text:
     {cv_text}
@@ -133,8 +148,6 @@ class EnhancedCVAnalyzer:
             gaps.append("Excel proficiency needs improvement")
         if skills_dict['analytical'] < 7:
             gaps.append("Analytical skills need strengthening")
-        if skills_dict.get('ma_experience', 0) < 6:
-            gaps.append("Limited M&A experience")
         return gaps
     
     def detect_red_flags(self, cv_analysis):
@@ -225,19 +238,34 @@ def load_session_state():
         return False
 
 def export_selected_candidates(filtered_df):
-    """Export selected candidates to CSV"""
+    """Export selected candidates to CSV with enhanced information"""
     if not filtered_df.empty:
-        # Flatten nested dictionaries for CSV export
         export_df = pd.DataFrame()
+        export_df['Email'] = filtered_df['email']
         export_df['Filename'] = filtered_df['filename']
         export_df['Overall Score'] = filtered_df['overall_score']
         export_df['Location'] = filtered_df['location'].apply(lambda x: x['location_details'])
-        export_df['Finance Score'] = filtered_df['skills'].apply(lambda x: x['finance_economics'])
+        
+        # Detailed skills breakdown
+        export_df['Finance/Economics Score'] = filtered_df['skills'].apply(lambda x: x['finance_economics'])
         export_df['Excel Score'] = filtered_df['skills'].apply(lambda x: x['excel'])
+        export_df['Analytical Score'] = filtered_df['skills'].apply(lambda x: x['analytical'])
+        
+        # Experience details
         export_df['Years Experience'] = filtered_df['experience'].apply(lambda x: x['years_relevant'])
+        export_df['Autonomy Score'] = filtered_df['experience'].apply(lambda x: x['autonomy'])
+        export_df['Industry Relevance'] = filtered_df['experience'].apply(lambda x: x['industry_relevance'])
+        
+        # Cultural fit scores
+        export_df['Learning Orientation'] = filtered_df['cultural_fit'].apply(lambda x: x['learning_orientation'])
+        export_df['Impact Driven'] = filtered_df['cultural_fit'].apply(lambda x: x['impact_driven'])
+        export_df['Team Orientation'] = filtered_df['cultural_fit'].apply(lambda x: x['team_orientation'])
+        
+        # Additional insights
         export_df['Key Strengths'] = filtered_df['key_strengths'].apply(lambda x: ', '.join(x))
         export_df['Skills Gaps'] = filtered_df['skills_gaps'].apply(lambda x: ', '.join(x))
         export_df['Red Flags'] = filtered_df['red_flags'].apply(lambda x: ', '.join(x))
+        export_df['Key Achievements'] = filtered_df['experience'].apply(lambda x: ', '.join(x['key_achievements']))
         
         # Convert to CSV
         csv = export_df.to_csv(index=False)
@@ -250,6 +278,68 @@ def export_selected_candidates(filtered_df):
             "text/csv",
             key='download-csv'
         )
+
+def display_results(filtered_df):
+    """Enhanced results display with sorting options"""
+    st.header("Analysis Results")
+    
+    # Sorting options
+    sort_by = st.selectbox(
+        "Sort candidates by:",
+        ["Overall Score", "Finance/Economics", "Excel", "Analytical", "Industry Relevance", "Learning Orientation"]
+    )
+    
+    # Create sorting mapping
+    sort_mapping = {
+        "Overall Score": "overall_score",
+        "Finance/Economics": lambda x: x['skills']['finance_economics'],
+        "Excel": lambda x: x['skills']['excel'],
+        "Analytical": lambda x: x['skills']['analytical'],
+        "Industry Relevance": lambda x: x['experience']['industry_relevance'],
+        "Learning Orientation": lambda x: x['cultural_fit']['learning_orientation']
+    }
+    
+    # Sort dataframe
+    if sort_by in sort_mapping:
+        if isinstance(sort_mapping[sort_by], str):
+            filtered_df = filtered_df.sort_values(sort_mapping[sort_by], ascending=False)
+        else:
+            filtered_df = filtered_df.sort_values(by=sort_mapping[sort_by], ascending=False)
+    
+    # Display results with enhanced visualization
+    for _, row in filtered_df.iterrows():
+        with st.expander(f"{row['filename']} - Score: {row['overall_score']:.1f}/10"):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.write("Contact:")
+                st.write(f"Email: {row['email']}")
+                st.write(f"Location: {row['location']['location_details']}")
+                
+                st.write("\nSkills (45%):")
+                st.write(f"Finance/Economics: {row['skills']['finance_economics']}/10")
+                st.write(f"Excel: {row['skills']['excel']}/10")
+                st.write(f"Analytical: {row['skills']['analytical']}/10")
+            
+            with col2:
+                st.write("Experience (15%):")
+                st.write(f"Years: {row['experience']['years_relevant']}")
+                st.write(f"Autonomy: {row['experience']['autonomy']}/10")
+                st.write(f"Industry Relevance: {row['experience']['industry_relevance']}/10")
+                
+                st.write("\nCultural Fit (25%):")
+                st.write(f"Learning: {row['cultural_fit']['learning_orientation']}/10")
+                st.write(f"Impact: {row['cultural_fit']['impact_driven']}/10")
+                st.write(f"Team: {row['cultural_fit']['team_orientation']}/10")
+            
+            with col3:
+                st.write("Key Insights:")
+                if row['key_strengths']:
+                    st.write("Strengths:", ", ".join(row['key_strengths']))
+                if row['skills_gaps']:
+                    st.write("Gaps:", ", ".join(row['skills_gaps']))
+                if row['red_flags']:
+                    st.write("Flags:", ", ".join(row['red_flags']))
 
 def main():
     st.title("Enhanced CV Analyzer")
